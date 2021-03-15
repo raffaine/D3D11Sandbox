@@ -65,8 +65,10 @@ void BasicScene::CreateMesh()
 		{ XMVectorSet(0.,0.,-1.,0.), XMVectorSet(0.,1.,0.,0.), XMVectorSet(1.,0.,0.,0.), XMVectorSet(1.,1.,0.,0.) },
 	};
 
-	auto MeshVertices = std::vector<VertexStructure>{ (m_MeshResolution + 1) * (m_MeshResolution + 1) * 6};
-	auto MeshIndices = std::vector<UINT>( m_MeshResolution * m_MeshResolution * 6 * 6 );
+	const size_t TotalVertices = size_t(m_MeshResolution + 1) * size_t(m_MeshResolution + 1) * 6;
+	const size_t TotalIndices  = size_t(m_MeshResolution) * size_t(m_MeshResolution) * 6 * 6;
+	auto MeshVertices = std::vector<VertexStructure>(TotalVertices);
+	auto MeshIndices = std::vector<UINT>( TotalIndices );
 
 	float stepSize = 1.0f / m_MeshResolution;
 	UINT index = 0;
@@ -77,8 +79,9 @@ void BasicScene::CreateMesh()
 				XMFLOAT2 local = XMFLOAT2(x * stepSize, y * stepSize);
 
 				XMVECTOR ptUnitCube = faces[face][0] + (local.x - .5f) * 2 * faces[face][1] + (local.y - .5f) * 2 * faces[face][2];
+				XMVECTOR ptUnitSphere = XMVector3Normalize(ptUnitCube);
 
-				XMStoreFloat3(&MeshVertices[i].Position, ptUnitCube);
+				XMStoreFloat3(&MeshVertices[i].Position, ptUnitSphere);
 				XMStoreFloat3(&MeshVertices[i].Color, faces[face][3]);
 				// As is, Normal is simply the face's up vector
 				XMStoreFloat3(&MeshVertices[i].Normal, faces[face][0]);
