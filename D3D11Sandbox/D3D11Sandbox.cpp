@@ -15,6 +15,12 @@
 #include <CommCtrl.h>
 #include <memory>
 
+#if defined(_X64)
+typedef int64_t HCHILD;
+#else
+typedef int HCHILD;
+#endif
+
 // Forward declarations of functions included in this code module:
 ATOM                MyRegisterClass(HINSTANCE hInstance);
 BOOL                InitInstance(HINSTANCE, int);
@@ -29,10 +35,6 @@ HINSTANCE hInst;                                // current instance
 WCHAR szTitle[MAX_LOADSTRING];                  // The title bar text
 WCHAR szWindowClass[MAX_LOADSTRING];            // the main window class name
 
-std::unique_ptr<ControlManager> gSideControls;
-#define EDIT_FIELD_ID 142
-#define BUTTON_ID     143
-
 struct Rational {
     UINT Numerator;
     UINT Denominator;
@@ -44,6 +46,7 @@ const Rational gCanvasXRatio { 80, 100 };
 const WCHAR* D3DWnd::szWndClass = L"DrawAreaWnd";
 
 std::unique_ptr<BasicScene> gCanvas;
+std::unique_ptr<ControlManager> gSideControls;
 
 
 using namespace Microsoft::WRL;
@@ -148,7 +151,7 @@ BOOL InitInstance(HINSTANCE hInstance, int nCmdShow)
 {
    hInst = hInstance; // Store instance handle in our global variable
 
-   HWND hWnd = CreateWindowW(szWindowClass, szTitle, WS_OVERLAPPEDWINDOW,
+   HWND hWnd = CreateWindowExW(WS_EX_APPWINDOW | WS_EX_OVERLAPPEDWINDOW, szWindowClass, szTitle, WS_OVERLAPPEDWINDOW,
       CW_USEDEFAULT, CW_USEDEFAULT, gDefaultWidth, gDefaultHeight, nullptr, nullptr, hInstance, nullptr);
 
    if (!hWnd)
@@ -186,8 +189,8 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam)
             UINT uControlsWidth = (rc.right - rc.left) - uCanvasWidth;
 
             // Create The Side Control Manager
-            RECT rcScene{ rc.left + 10, rc.top + 10, (LONG) uControlsWidth - 20, rc.bottom - 20 };
-            gSideControls = std::make_unique<ControlManager>(hWnd, EDIT_FIELD_ID, rcScene);
+            RECT rcScene{ rc.left, rc.top, (LONG) uControlsWidth, rc.bottom };
+            gSideControls = std::make_unique<ControlManager>(hWnd, IDR_MAINFRAME + 1, rcScene);
 
             // If it errors, then some random crap on class register is going on, back to square 0
             // The real work happens once HWND has been created
@@ -466,7 +469,7 @@ LRESULT CALLBACK D3DWnd::StaticWndProc(HWND hWnd, UINT message, WPARAM wParam, L
             gCanvas->SetResolution(nRes);
         });
 
-        gSideControls->AddButton(L"Regenerate", 25, 80, []() {
+        gSideControls->AddButton(L"Regenerate", 45, 80, []() {
             gCanvas->Regenerate();
         });
 
@@ -476,22 +479,7 @@ LRESULT CALLBACK D3DWnd::StaticWndProc(HWND hWnd, UINT message, WPARAM wParam, L
         if (pD3DWnd != nullptr) {
             pD3DWnd->WindowResizeEvent(LOWORD(lParam), HIWORD(lParam));
         }
-        break;/*
-    case WM_PAINT:
-        {
-            PAINTSTRUCT ps;
-            HDC hdc = BeginPaint(hWnd, &ps);
-            RECT rcClient;
-            GetClientRect(hWnd, &rcClient);
-            
-            HBRUSH brush = CreateSolidBrush(RGB(255, 0, 0));
-            SelectObject(hdc, brush);
-
-            Rectangle(hdc, rcClient.left + 10, rcClient.top + 10, rcClient.right - 10, rcClient.bottom - 10);
-
-            EndPaint(hWnd, &ps);
-        }
-        break;*/
+        break;
     case WM_DESTROY:
         SetWindowLongPtr(hWnd, GWLP_USERDATA, NULL);
         __fallthrough;
@@ -504,10 +492,15 @@ LRESULT CALLBACK D3DWnd::StaticWndProc(HWND hWnd, UINT message, WPARAM wParam, L
 ControlManager::ControlManager(HWND hwnd, UINT startId, RECT rcArea) 
     : m_hwnd(hwnd), m_ctrlRange(startId, startId), m_CtrlArea(rcArea)
 {
+    HWND hArea = CreateWindowEx(WS_EX_CONTROLPARENT | WS_EX_TOOLWINDOW, WC_STATIC, L"", WS_CHILDWINDOW | WS_CLIPCHILDREN | WS_VISIBLE,
+        m_CtrlArea.left, m_CtrlArea.top, m_CtrlArea.right, m_CtrlArea.bottom, m_hwnd, (HMENU)(HCHILD) startId, hInst, NULL);
+
+    m_ctrls.push_back(Ctrl{ startId++, hArea });
+
     // Group Box
     HWND hGroup = CreateWindowEx(WS_EX_LEFT | WS_EX_CONTROLPARENT | WS_EX_LTRREADING, WC_BUTTON, L"Scene Controls", 
                                  WS_CHILDWINDOW | WS_CLIPCHILDREN | WS_VISIBLE | WS_GROUP | BS_GROUPBOX,
-                                 m_CtrlArea.left, m_CtrlArea.top, m_CtrlArea.right, m_CtrlArea.bottom, m_hwnd, (HMENU) startId, hInst, NULL);
+                                 m_CtrlArea.left + 15, m_CtrlArea.top + 15, m_CtrlArea.right - 30, m_CtrlArea.bottom - 25, m_hwnd, (HMENU)(HCHILD) startId, hInst, NULL);
 
     m_ctrls.push_back(Ctrl{startId, hGroup});
 
@@ -535,20 +528,20 @@ void ControlManager::AddIntegerControl(const WCHAR* szLabel, UINT x, UINT y, UIN
 
     // Label
     hwnd = CreateWindowEx(WS_EX_LEFT | WS_EX_LTRREADING, WC_STATIC, szLabel, WS_CHILDWINDOW | WS_VISIBLE | SS_RIGHT,
-                          m_CtrlArea.left + x, m_CtrlArea.top + y, 80, 25, m_hwnd, (HMENU) itId, hInst, NULL);
+                          m_CtrlArea.left + x, m_CtrlArea.top + y + 5, 80, 25, m_hwnd, (HMENU)(HCHILD) itId, hInst, NULL);
     m_ctrls.push_back(Ctrl{ itId++, hwnd });
 
     // Edit Control
     hwnd = CreateWindowEx(WS_EX_LEFT | WS_EX_CLIENTEDGE | WS_EX_CONTEXTHELP, WC_EDIT, NULL,
                           WS_CHILDWINDOW | WS_VISIBLE | WS_BORDER | ES_NUMBER | ES_LEFT,
-                          m_CtrlArea.left + x + 90, m_CtrlArea.top + y, 40, 25, m_hwnd, (HMENU) itId, hInst, NULL);
+                          m_CtrlArea.left + x + 90, m_CtrlArea.top + y, 60, 25, m_hwnd, (HMENU)(HCHILD) itId, hInst, NULL);
     m_ctrls.push_back(Ctrl{ itId++, hwnd });
 
     // UpDown Arrow
     hwnd = CreateWindowEx(WS_EX_LEFT | WS_EX_LTRREADING, UPDOWN_CLASS, NULL, WS_CHILDWINDOW | WS_VISIBLE
                           | UDS_AUTOBUDDY | UDS_SETBUDDYINT | UDS_ALIGNRIGHT | UDS_ARROWKEYS | UDS_HOTTRACK,
                           0, 0, 0, 0,         // Set to zero to automatically size to fit the buddy window.
-                          m_hwnd, (HMENU) itId, hInst, NULL);
+                          m_hwnd, (HMENU)(HCHILD) itId, hInst, NULL);
     m_ctrls.push_back(Ctrl{ itId, hwnd });
 
     SendMessage(hwnd, UDM_SETRANGE, 0, MAKELPARAM(range_max, range_min));    // Sets the controls direction  and range.
@@ -570,8 +563,8 @@ void ControlManager::AddButton(const WCHAR* szCaption, UINT x, UINT y, std::func
 {
     UINT itId = m_ctrlRange.high + 1;
 
-    HWND hwndBtn = CreateWindow(L"BUTTON", L"Generate", WS_TABSTOP | WS_VISIBLE | WS_CHILD | BS_DEFPUSHBUTTON,
-                                m_CtrlArea.left + x, m_CtrlArea.top + y, 100, 30, m_hwnd, (HMENU) itId , hInst, NULL);
+    HWND hwndBtn = CreateWindow(WC_BUTTON, szCaption, WS_TABSTOP | WS_VISIBLE | WS_CHILD | BS_DEFPUSHBUTTON,
+                                m_CtrlArea.left + x, m_CtrlArea.top + y, 100, 30, m_hwnd, (HMENU)(HCHILD) itId , hInst, NULL);
 
     m_ctrls.push_back(Ctrl{ itId, hwndBtn });
     m_ctrlRange.high = std::max(m_ctrlRange.high, itId);
