@@ -5,10 +5,14 @@
 
 class BasicScene : public D3DWnd {
 
-	struct ConstantBufferStruct {
+	struct WordViewProjectionBuffer {
 		DirectX::XMFLOAT4X4 World;
 		DirectX::XMFLOAT4X4 View;
 		DirectX::XMFLOAT4X4 Projection;
+	};
+
+	struct LightSettings {
+		DirectX::XMFLOAT4 LightPos;
 	};
 
 	struct VertexStructure {
@@ -20,11 +24,13 @@ class BasicScene : public D3DWnd {
 	Microsoft::WRL::ComPtr<ID3D11VertexShader>	m_pVShader;
 	Microsoft::WRL::ComPtr<ID3D11InputLayout>	m_pVSInputLayout;
 	Microsoft::WRL::ComPtr<ID3D11PixelShader>	m_pPShader;
-	Microsoft::WRL::ComPtr<ID3D11Buffer>		m_pConstantBuffer;
+	Microsoft::WRL::ComPtr<ID3D11Buffer>		m_pCBWordViewProj;
+	Microsoft::WRL::ComPtr<ID3D11Buffer>		m_pCBLightSettings;
 	Microsoft::WRL::ComPtr<ID3D11Buffer>		m_pVertexBuffer;
 	Microsoft::WRL::ComPtr<ID3D11Buffer>		m_pIndexBuffer;
 
-	ConstantBufferStruct					    m_cbData;
+	WordViewProjectionBuffer					m_cbWorldViewProjData;
+	LightSettings								m_cbLightSettings;
 
 	void CreateShaders();
 	void CreateMesh();
