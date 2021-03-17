@@ -11,6 +11,18 @@
 #include <map>
 #include <functional>
 
+#include <comdef.h>  // Declares _com_error
+
+// Still needs one that better parses D3D Errors, but that
+// requires setting up a DXGI Info Queue and so on ...
+inline void throw_if_fail(HRESULT hr)
+{
+	if (FAILED(hr))
+	{
+		throw _com_error(hr);
+	}
+}
+
 class ControlManager {
 	struct Range {
 		UINT low, high;
@@ -36,6 +48,8 @@ public:
 
 	void AddIntegerControl(const WCHAR* szLabel, UINT x, UINT y, UINT range_min, UINT range_max, UINT initial, std::function<void(UINT)> fnCallback);
 	void AddButton(const WCHAR* szCaption, UINT x, UINT y, std::function<void()> fnAction);
+
+	static std::wstring GetFilePathFromUser(HWND hWnd);
 };
 
 class D3DWnd {

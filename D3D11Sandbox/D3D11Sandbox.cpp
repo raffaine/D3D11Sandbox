@@ -13,6 +13,7 @@
 #undef max
 
 #include <CommCtrl.h>
+#include <shobjidl.h> 
 #include <memory>
 
 #if defined(_X64)
@@ -58,7 +59,7 @@ int APIENTRY wWinMain(_In_ HINSTANCE hInstance,
 {
     UNREFERENCED_PARAMETER(hPrevInstance);
     UNREFERENCED_PARAMETER(lpCmdLine);
-
+    
     // Initialize global strings
     LoadStringW(hInstance, IDS_APP_TITLE, szTitle, MAX_LOADSTRING);
     LoadStringW(hInstance, IDC_D3D11SANDBOX, szWindowClass, MAX_LOADSTRING);
@@ -208,6 +209,12 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam)
             case IDM_ABOUT:
                 DialogBox(hInst, MAKEINTRESOURCE(IDD_ABOUTBOX), hWnd, About);
                 break;
+            case ID_FILE_MESHLOADER:
+            {
+                auto meshfilename = gSideControls->GetFilePathFromUser(hWnd);
+                OutputDebugString(meshfilename.c_str());
+            }
+            break;
             case IDM_EXIT:
                 DestroyWindow(hWnd);
                 break;
@@ -571,6 +578,35 @@ void ControlManager::AddButton(const WCHAR* szCaption, UINT x, UINT y, std::func
     m_Callbacks[itId] = [=](UINT, WPARAM, LPARAM) {
         fnAction();
     };
+}
+
+std::wstring ControlManager::GetFilePathFromUser(HWND hWnd)
+{
+    std::wstring result;
+    HRESULT hr = CoInitializeEx(NULL, COINIT_APARTMENTTHREADED | COINIT_DISABLE_OLE1DDE);
+
+    try {
+        ComPtr<IFileOpenDialog> pFileOpenDlg;
+        throw_if_fail(CoCreateInstance(CLSID_FileOpenDialog, NULL, CLSCTX_ALL, IID_PPV_ARGS(&pFileOpenDlg)));
+        throw_if_fail(pFileOpenDlg->Show(hWnd));
+
+        ComPtr<IShellItem> pShellItem;
+        throw_if_fail(pFileOpenDlg->GetResult(&pShellItem));
+
+        PWSTR pszFilePath;
+        throw_if_fail(pShellItem->GetDisplayName(SIGDN_FILESYSPATH, &pszFilePath));
+
+        result = std::wstring(pszFilePath);
+        CoTaskMemFree(pszFilePath);
+    }
+    catch (_com_error err) {
+        WCHAR buff[256] = {};
+        swprintf_s(buff, L"Error on File Dialog: %s \n", err.ErrorMessage());
+        OutputDebugStringW(buff);
+    }
+
+    CoUninitialize();
+    return result;
 }
 
 
