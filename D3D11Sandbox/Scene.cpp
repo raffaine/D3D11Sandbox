@@ -118,7 +118,6 @@ void BasicScene::CreateMesh()
 		WCHAR buff[512] = {};
 		swprintf_s(buff, L"Basic Scene failed to load Mesh Data: %s \n", err.ErrorMessage());
 		OutputDebugStringW(buff);
-		return;
 	}
 }
 
