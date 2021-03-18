@@ -1,5 +1,11 @@
+# Internal VS Files
 .vs/
+*.aps
+
+# VS Output
 Debug/
 Release/
 
-*.aps
+# NuGet Packages
+packages/
+

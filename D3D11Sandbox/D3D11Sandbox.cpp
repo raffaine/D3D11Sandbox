@@ -4,6 +4,7 @@
 #include "framework.h"
 #include "D3D11Sandbox.h"
 #include "Scene.h"
+#include "MeshLoader.h"
 
 #pragma comment(lib, "d3d11.lib")
 #pragma comment(lib, "dxgi.lib")
@@ -46,7 +47,7 @@ const UINT gDefaultHeight = (gDefaultWidth * 9) / 16;
 const Rational gCanvasXRatio { 80, 100 };
 const WCHAR* D3DWnd::szWndClass = L"DrawAreaWnd";
 
-std::unique_ptr<BasicScene> gCanvas;
+std::unique_ptr<D3DWnd> gCanvas;
 std::unique_ptr<ControlManager> gSideControls;
 
 
@@ -209,12 +210,16 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam)
             case IDM_ABOUT:
                 DialogBox(hInst, MAKEINTRESOURCE(IDD_ABOUTBOX), hWnd, About);
                 break;
+            case ID_FILE_BASICSCENE:
+                if (gCanvas != nullptr) {
+                    gCanvas->LoadScene(new BasicScene(gCanvas.get()), gSideControls.get());
+                }
+                break;
             case ID_FILE_MESHLOADER:
-            {
-                auto meshfilename = gSideControls->GetFilePathFromUser(hWnd);
-                OutputDebugString(meshfilename.c_str());
-            }
-            break;
+                if (gCanvas != nullptr) {
+                    gCanvas->LoadScene(new MeshLoaderScene(gCanvas.get(), gSideControls->GetFilePathFromUser(hWnd)), gSideControls.get());
+                }
+                break;
             case IDM_EXIT:
                 DestroyWindow(hWnd);
                 break;
@@ -277,6 +282,14 @@ bool D3DWnd::ReadBytes(const char* cso_file, BYTE** content, size_t& content_siz
     }
 
     return false;
+}
+
+void D3DWnd::ClearAndSetTargets(const float clr[4], float depth, UINT8 stencil)
+{
+    m_context->ClearRenderTargetView(m_rtv.Get(), clr);
+    m_context->ClearDepthStencilView(m_dsv.Get(), D3D11_CLEAR_DEPTH | D3D11_CLEAR_STENCIL, depth, stencil);
+    m_context->OMSetRenderTargets(1, m_rtv.GetAddressOf(), m_dsv.Get());
+    m_context->RSSetViewports(1, &m_viewport);
 }
 
 void D3DWnd::InitializeD3D() {
@@ -357,14 +370,16 @@ void D3DWnd::InitializeD3D() {
     pDevice.As(&m_device);
     pContext.As(&m_context);
 
-    CreateDeviceDependentResources();
+    if (m_pScene)
+        m_pScene->CreateDeviceDependentResources();
 }
 
 void D3DWnd::ReleaseD3DResources() {
-    ReleaseResources();
+    if (m_pScene)
+        m_pScene->ReleaseResources();
 
-    m_device.Reset();
     m_context.Reset();
+    m_device.Reset();
 }
 
 void D3DWnd::WindowResizeEvent(UINT width, UINT height) {
@@ -454,7 +469,20 @@ void D3DWnd::WindowResizeEvent(UINT width, UINT height) {
 
     m_context->RSSetViewports(1, &m_viewport);
 
-    CreateWindowSizeDependentResources();
+    if( m_pScene )
+        m_pScene->CreateWindowSizeDependentResources();
+}
+
+void D3DWnd::LoadScene(IScene* pScene, ControlManager* mgr)
+{
+    if (m_pScene)
+        m_pScene->ReleaseResources();
+
+    pScene->CreateDeviceDependentResources();
+    pScene->CreateWindowSizeDependentResources();
+    pScene->CreateSideControls(mgr);
+
+    m_pScene.reset(pScene);
 }
 
 void D3DWnd::Present() {
@@ -469,17 +497,11 @@ LRESULT CALLBACK D3DWnd::StaticWndProc(HWND hWnd, UINT message, WPARAM wParam, L
     switch (message)
     {
     case WM_NCCREATE:
-        gCanvas = std::make_unique<BasicScene>(hWnd);
+        gCanvas = std::make_unique<D3DWnd>(hWnd);
         SetWindowLongPtr(hWnd, GWLP_USERDATA, reinterpret_cast<LONG_PTR>(gCanvas.get()));
         
-        gSideControls->AddIntegerControl(L"Resolution:", 20, 40, 1, 100, 1, [](UINT nRes) {
-            gCanvas->SetResolution(nRes);
-        });
-
-        gSideControls->AddButton(L"Regenerate", 45, 80, []() {
-            gCanvas->Regenerate();
-        });
-
+        gCanvas->WindowResizeEvent(100, 100);
+        gCanvas->LoadScene( new BasicScene(gCanvas.get()) ,gSideControls.get());
         return TRUE;
     case WM_SIZE:
         pD3DWnd = reinterpret_cast<D3DWnd*>(GetWindowLongPtr(hWnd, GWLP_USERDATA));
@@ -488,7 +510,11 @@ LRESULT CALLBACK D3DWnd::StaticWndProc(HWND hWnd, UINT message, WPARAM wParam, L
         }
         break;
     case WM_DESTROY:
-        SetWindowLongPtr(hWnd, GWLP_USERDATA, NULL);
+        pD3DWnd = reinterpret_cast<D3DWnd*>(GetWindowLongPtr(hWnd, GWLP_USERDATA));
+        if (pD3DWnd != nullptr) {
+            gCanvas.reset();
+            SetWindowLongPtr(hWnd, GWLP_USERDATA, NULL);
+        }
         __fallthrough;
     default:
         ret = DefWindowProc(hWnd, message, wParam, lParam);
@@ -499,18 +525,8 @@ LRESULT CALLBACK D3DWnd::StaticWndProc(HWND hWnd, UINT message, WPARAM wParam, L
 ControlManager::ControlManager(HWND hwnd, UINT startId, RECT rcArea) 
     : m_hwnd(hwnd), m_ctrlRange(startId, startId), m_CtrlArea(rcArea)
 {
-    HWND hArea = CreateWindowEx(WS_EX_CONTROLPARENT | WS_EX_TOOLWINDOW, WC_STATIC, L"", WS_CHILDWINDOW | WS_CLIPCHILDREN | WS_VISIBLE,
-        m_CtrlArea.left, m_CtrlArea.top, m_CtrlArea.right, m_CtrlArea.bottom, m_hwnd, (HMENU)(HCHILD) startId, hInst, NULL);
-
-    m_ctrls.push_back(Ctrl{ startId++, hArea });
-
-    // Group Box
-    HWND hGroup = CreateWindowEx(WS_EX_LEFT | WS_EX_CONTROLPARENT | WS_EX_LTRREADING, WC_BUTTON, L"Scene Controls", 
-                                 WS_CHILDWINDOW | WS_CLIPCHILDREN | WS_VISIBLE | WS_GROUP | BS_GROUPBOX,
-                                 m_CtrlArea.left + 15, m_CtrlArea.top + 15, m_CtrlArea.right - 30, m_CtrlArea.bottom - 25, m_hwnd, (HMENU)(HCHILD) startId, hInst, NULL);
-
-    m_ctrls.push_back(Ctrl{startId, hGroup});
-
+    CreateWindowEx(WS_EX_CONTROLPARENT | WS_EX_TOOLWINDOW, WC_STATIC, L"", WS_CHILDWINDOW | WS_CLIPCHILDREN | WS_VISIBLE,
+        m_CtrlArea.left, m_CtrlArea.top, m_CtrlArea.right, m_CtrlArea.bottom, m_hwnd, (HMENU)(HCHILD) startId++, hInst, NULL);
 }
 
 BOOL ControlManager::MsgProc(UINT msg, WPARAM w, LPARAM l)
@@ -528,34 +544,58 @@ BOOL ControlManager::MsgProc(UINT msg, WPARAM w, LPARAM l)
     return FALSE;
 }
 
-void ControlManager::AddIntegerControl(const WCHAR* szLabel, UINT x, UINT y, UINT range_min, UINT range_max, UINT initial, std::function<void(UINT)> fnCallback)
+ControlManager::ControlGroup* ControlManager::CreateGroup(const WCHAR* szLabel)
+{
+    RECT rcArea = RECT{ m_CtrlArea.left + 15, m_CtrlArea.top + 10, m_CtrlArea.right - 30, m_CtrlArea.bottom - 25 };
+
+    // Group Box
+    HWND hGroup = CreateWindowEx(WS_EX_LEFT | WS_EX_CONTROLPARENT | WS_EX_LTRREADING, WC_BUTTON, L"Scene Controls",
+                  WS_CHILDWINDOW | WS_CLIPCHILDREN | WS_VISIBLE | WS_GROUP | BS_GROUPBOX,
+                  rcArea.left, rcArea.top, rcArea.right, rcArea.bottom, m_hwnd, (HMENU)(HCHILD) ++m_ctrlRange.high, hInst, NULL);
+
+    return new ControlGroup(this, rcArea, hGroup, m_ctrlRange.high);
+}
+
+ControlManager::ControlGroup::~ControlGroup()
+{
+    for (Ctrl c : _ctrls) {
+        _mgr->m_Callbacks.erase(c.CtrlId);
+        DestroyWindow(c.CtrlWnd);
+    }
+    // I have to readjust the range, but leaking those ranges at this point
+    // is not an issue
+}
+
+ControlManager::ControlGroup& ControlManager::ControlGroup::AddIntegerControl(const WCHAR* szLabel,  UINT range_min, UINT range_max, UINT initial, std::function<void(UINT)> fnCallback)
 {
     HWND hwnd;
-    UINT itId = m_ctrlRange.high + 1;
+    UINT x = 10, y = 15;
+    UINT itId = _mgr->m_ctrlRange.high + 1;
 
     // Label
     hwnd = CreateWindowEx(WS_EX_LEFT | WS_EX_LTRREADING, WC_STATIC, szLabel, WS_CHILDWINDOW | WS_VISIBLE | SS_RIGHT,
-                          m_CtrlArea.left + x, m_CtrlArea.top + y + 5, 80, 25, m_hwnd, (HMENU)(HCHILD) itId, hInst, NULL);
-    m_ctrls.push_back(Ctrl{ itId++, hwnd });
+                          _area.left + x, _area.top + y, 80, 25, _mgr->m_hwnd, (HMENU)(HCHILD) itId, hInst, NULL);
+    _ctrls.push_back(Ctrl{ itId++, hwnd });
 
     // Edit Control
     hwnd = CreateWindowEx(WS_EX_LEFT | WS_EX_CLIENTEDGE | WS_EX_CONTEXTHELP, WC_EDIT, NULL,
                           WS_CHILDWINDOW | WS_VISIBLE | WS_BORDER | ES_NUMBER | ES_LEFT,
-                          m_CtrlArea.left + x + 90, m_CtrlArea.top + y, 60, 25, m_hwnd, (HMENU)(HCHILD) itId, hInst, NULL);
-    m_ctrls.push_back(Ctrl{ itId++, hwnd });
+                          _area.left + x + 90, _area.top + y, 60, 25, _mgr->m_hwnd, (HMENU)(HCHILD) itId, hInst, NULL);
+    _ctrls.push_back(Ctrl{ itId++, hwnd });
 
     // UpDown Arrow
     hwnd = CreateWindowEx(WS_EX_LEFT | WS_EX_LTRREADING, UPDOWN_CLASS, NULL, WS_CHILDWINDOW | WS_VISIBLE
                           | UDS_AUTOBUDDY | UDS_SETBUDDYINT | UDS_ALIGNRIGHT | UDS_ARROWKEYS | UDS_HOTTRACK,
                           0, 0, 0, 0,         // Set to zero to automatically size to fit the buddy window.
-                          m_hwnd, (HMENU)(HCHILD) itId, hInst, NULL);
-    m_ctrls.push_back(Ctrl{ itId, hwnd });
+                          _mgr->m_hwnd, (HMENU)(HCHILD) itId, hInst, NULL);
+    _ctrls.push_back(Ctrl{ itId, hwnd });
+    _area.top += 30 + y;
 
     SendMessage(hwnd, UDM_SETRANGE, 0, MAKELPARAM(range_max, range_min));    // Sets the controls direction  and range.
     SendMessage(hwnd, UDM_SETPOS32, 0, (LPARAM)initial);
 
     // Creates the callback object to respond to this
-    m_Callbacks[(itId-1)] = [=](UINT, WPARAM w, LPARAM) {
+    _mgr->m_Callbacks[(itId-1)] = [=](UINT, WPARAM w, LPARAM) {
         UINT evt = HIWORD(w);
         if (evt == EN_CHANGE) {
             UINT value = (UINT) SendMessage(hwnd, UDM_GETPOS32, 0, NULL);
@@ -563,21 +603,26 @@ void ControlManager::AddIntegerControl(const WCHAR* szLabel, UINT x, UINT y, UIN
         }
     };
 
-    m_ctrlRange.high = std::max(m_ctrlRange.high, itId);
+    _mgr->m_ctrlRange.high = std::max(_mgr->m_ctrlRange.high, itId);
+
+    return *this;
 }
 
-void ControlManager::AddButton(const WCHAR* szCaption, UINT x, UINT y, std::function<void()> fnAction)
+ControlManager::ControlGroup& ControlManager::ControlGroup::AddButton(const WCHAR* szCaption, std::function<void()> fnAction)
 {
-    UINT itId = m_ctrlRange.high + 1;
+    UINT itId = _mgr->m_ctrlRange.high + 1;
 
     HWND hwndBtn = CreateWindow(WC_BUTTON, szCaption, WS_TABSTOP | WS_VISIBLE | WS_CHILD | BS_DEFPUSHBUTTON,
-                                m_CtrlArea.left + x, m_CtrlArea.top + y, 100, 30, m_hwnd, (HMENU)(HCHILD) itId , hInst, NULL);
-
-    m_ctrls.push_back(Ctrl{ itId, hwndBtn });
-    m_ctrlRange.high = std::max(m_ctrlRange.high, itId);
-    m_Callbacks[itId] = [=](UINT, WPARAM, LPARAM) {
+                                _area.left + 35, _area.top + 5, 100, 30, _mgr->m_hwnd, (HMENU)(HCHILD) itId , hInst, NULL);
+    _area.top += 40;
+    _ctrls.push_back(Ctrl{ itId, hwndBtn });
+    
+    _mgr->m_ctrlRange.high = std::max(_mgr->m_ctrlRange.high, itId);
+    _mgr->m_Callbacks[itId] = [=](UINT, WPARAM, LPARAM) {
         fnAction();
     };
+
+    return *this;
 }
 
 std::wstring ControlManager::GetFilePathFromUser(HWND hWnd)

@@ -13,7 +13,7 @@ void BasicScene::CreateShaders()
 
 	try {
 		// Load Vertex Shader File and Create D3D Object
-		if (!ReadBytes(".\\SceneVS.cso", &bytes, bytesRead)) {
+		if (!m_pD3D->ReadBytes(".\\SceneVS.cso", &bytes, bytesRead)) {
 			OutputDebugString(L"Couldn't load Vertex Shader\n");
 			return;
 		}
@@ -24,25 +24,25 @@ void BasicScene::CreateShaders()
 			{ "COLOR", 0, DXGI_FORMAT_R32G32B32_FLOAT, 0, D3D11_APPEND_ALIGNED_ELEMENT, D3D11_INPUT_PER_VERTEX_DATA, 0 },
 			{ "NORMAL", 0, DXGI_FORMAT_R32G32B32_FLOAT, 0, D3D11_APPEND_ALIGNED_ELEMENT, D3D11_INPUT_PER_VERTEX_DATA, 0 }
 		};
-		throw_if_fail(m_device->CreateVertexShader(bytes, bytesRead, nullptr, m_pVShader.ReleaseAndGetAddressOf()));
-		throw_if_fail(m_device->CreateInputLayout(iaDesc, _countof(iaDesc), bytes, bytesRead, m_pVSInputLayout.ReleaseAndGetAddressOf()));
+		throw_if_fail(m_pD3D->m_device->CreateVertexShader(bytes, bytesRead, nullptr, m_pVShader.ReleaseAndGetAddressOf()));
+		throw_if_fail(m_pD3D->m_device->CreateInputLayout(iaDesc, _countof(iaDesc), bytes, bytesRead, m_pVSInputLayout.ReleaseAndGetAddressOf()));
 		delete[] bytes;
 
 		// Load Pixel Shader File and Create D3D Object
-		if (!ReadBytes(".\\ScenePS.cso", &bytes, bytesRead)) {
+		if (!m_pD3D->ReadBytes(".\\ScenePS.cso", &bytes, bytesRead)) {
 			OutputDebugString(L"Couldn't load Pixel Shader\n");
 			return;
 		}
 
-		throw_if_fail(m_device->CreatePixelShader(bytes, bytesRead, nullptr, m_pPShader.ReleaseAndGetAddressOf()));
+		throw_if_fail(m_pD3D->m_device->CreatePixelShader(bytes, bytesRead, nullptr, m_pPShader.ReleaseAndGetAddressOf()));
 		delete[] bytes;
 
 		// Create Constant Buffers
 		CD3D11_BUFFER_DESC cbdsc{ sizeof(WordViewProjectionBuffer), D3D11_BIND_CONSTANT_BUFFER };
-		throw_if_fail(m_device->CreateBuffer(&cbdsc, nullptr, m_pCBWordViewProj.ReleaseAndGetAddressOf()));
+		throw_if_fail(m_pD3D->m_device->CreateBuffer(&cbdsc, nullptr, m_pCBWordViewProj.ReleaseAndGetAddressOf()));
 
 		CD3D11_BUFFER_DESC cbdsc2{ sizeof(LightSettings), D3D11_BIND_CONSTANT_BUFFER };
-		throw_if_fail(m_device->CreateBuffer(&cbdsc2, nullptr, m_pCBLightSettings.ReleaseAndGetAddressOf()));
+		throw_if_fail(m_pD3D->m_device->CreateBuffer(&cbdsc2, nullptr, m_pCBLightSettings.ReleaseAndGetAddressOf()));
 	}
 	catch (_com_error err) {
 		WCHAR buff[512] = {};
@@ -105,7 +105,7 @@ void BasicScene::CreateMesh()
 		ZeroMemory(&vData, sizeof(D3D11_SUBRESOURCE_DATA));
 		vData.pSysMem = MeshVertices.data();
 
-		throw_if_fail(m_device->CreateBuffer(&vbdsc, &vData, m_pVertexBuffer.ReleaseAndGetAddressOf()));
+		throw_if_fail(m_pD3D->m_device->CreateBuffer(&vbdsc, &vData, m_pVertexBuffer.ReleaseAndGetAddressOf()));
 
 		// Create the Index Buffer
 		CD3D11_BUFFER_DESC ibdsc{ (UINT)MeshIndices.size() * sizeof(UINT), D3D11_BIND_INDEX_BUFFER };
@@ -113,7 +113,7 @@ void BasicScene::CreateMesh()
 		ZeroMemory(&iData, sizeof(D3D11_SUBRESOURCE_DATA));
 		iData.pSysMem = MeshIndices.data();
 
-		throw_if_fail(m_device->CreateBuffer(&ibdsc, &iData, m_pIndexBuffer.ReleaseAndGetAddressOf()));
+		throw_if_fail(m_pD3D->m_device->CreateBuffer(&ibdsc, &iData, m_pIndexBuffer.ReleaseAndGetAddressOf()));
 	} catch (_com_error err) {
 		WCHAR buff[512] = {};
 		swprintf_s(buff, L"Basic Scene failed to load Mesh Data: %s \n", err.ErrorMessage());
@@ -135,7 +135,7 @@ void BasicScene::CreateViewAndPerspective() {
 	//  better grasp the calculation. The idea is that it corrects the orientation (Portrait/Landscape) 
 	//  in case aspect ratio is inverted. But, again, I'm not sure, this calculation is from MSDN docs
 	const float fovy = 3.1415f / 4; // PI/4
-	float aspectRatioX = float(m_width) / m_height;
+	float aspectRatioX = float(m_pD3D->m_width) / m_pD3D->m_height;
 
 	XMStoreFloat4x4(&m_cbWorldViewProjData.Projection, XMMatrixTranspose(
 		XMMatrixPerspectiveFovLH(2.0f * std::atan(std::tan(fovy) / aspectRatioX), aspectRatioX, .01f, 1000.f)));
@@ -169,6 +169,16 @@ void BasicScene::CreateWindowSizeDependentResources() {
 	CreateViewAndPerspective();
 }
 
+void BasicScene::CreateSideControls(ControlManager* pManager)
+{
+	m_pSideControls.reset(pManager->CreateGroup(L"Scene Details"));
+	m_pSideControls->AddIntegerControl(L"Resolution:", 1, 100, 1, [this](UINT nRes) {
+		this->SetResolution(nRes);
+	}).AddButton(L"Regenerate", [this]() {
+		this->Regenerate();
+	});
+}
+
 void BasicScene::ReleaseResources()
 {
 	// Release D3D Mesh Resources
@@ -183,6 +193,9 @@ void BasicScene::ReleaseResources()
 	m_pPShader.Reset();
 	m_pVSInputLayout.Reset();
 	m_pVShader.Reset();
+
+	// Release Side Control
+	m_pSideControls.reset();
 }
 
 void BasicScene::Update() {
@@ -194,33 +207,32 @@ void BasicScene::Update() {
 }
 
 void BasicScene::Render() {
+	auto context = m_pD3D->m_context.Get();
+
 	// Update Constant Buffer
-	m_context->UpdateSubresource(m_pCBWordViewProj.Get(), 0, nullptr, &m_cbWorldViewProjData, 0, 0);
-	m_context->UpdateSubresource(m_pCBLightSettings.Get(), 0, nullptr, &m_cbLightSettings, 0, 0);
+	context->UpdateSubresource(m_pCBWordViewProj.Get(), 0, nullptr, &m_cbWorldViewProjData, 0, 0);
+	context->UpdateSubresource(m_pCBLightSettings.Get(), 0, nullptr, &m_cbLightSettings, 0, 0);
 
 	// Clear RTV and DSV and Setup Output Merger
 	const float clearClr[] = {.1f, .425f, .425f, 1.0f};
-	m_context->ClearRenderTargetView( m_rtv.Get(), clearClr );
-	m_context->ClearDepthStencilView( m_dsv.Get(), D3D11_CLEAR_DEPTH | D3D11_CLEAR_STENCIL, 1.0f, 0 );
-	m_context->OMSetRenderTargets(1, m_rtv.GetAddressOf(), m_dsv.Get());
-	m_context->RSSetViewports(1, &m_viewport);
+	m_pD3D->ClearAndSetTargets(clearClr);
 
 	// Input Assembler
 	UINT strides[]{ sizeof(VertexStructure) };
 	UINT offsets[]{ 0 };
-	m_context->IASetVertexBuffers(0, 1, m_pVertexBuffer.GetAddressOf(), strides, offsets);
-	m_context->IASetIndexBuffer(m_pIndexBuffer.Get(), DXGI_FORMAT_R32_UINT, 0);
-	m_context->IASetPrimitiveTopology(D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
-	m_context->IASetInputLayout(m_pVSInputLayout.Get());
+	context->IASetVertexBuffers(0, 1, m_pVertexBuffer.GetAddressOf(), strides, offsets);
+	context->IASetIndexBuffer(m_pIndexBuffer.Get(), DXGI_FORMAT_R32_UINT, 0);
+	context->IASetPrimitiveTopology(D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
+	context->IASetInputLayout(m_pVSInputLayout.Get());
 
 	// Vertex Shader
-	m_context->VSSetShader(m_pVShader.Get(), nullptr, 0);
-	m_context->VSSetConstantBuffers(0, 1, m_pCBWordViewProj.GetAddressOf());
-	m_context->VSSetConstantBuffers(1, 1, m_pCBLightSettings.GetAddressOf());
+	context->VSSetShader(m_pVShader.Get(), nullptr, 0);
+	context->VSSetConstantBuffers(0, 1, m_pCBWordViewProj.GetAddressOf());
+	context->VSSetConstantBuffers(1, 1, m_pCBLightSettings.GetAddressOf());
 
 	// Pixel Shader
-	m_context->PSSetShader(m_pPShader.Get(), nullptr, 0);
+	context->PSSetShader(m_pPShader.Get(), nullptr, 0);
 
 	// Draw
-	m_context->DrawIndexed(m_IndexCount, 0, 0);
+	context->DrawIndexed(m_IndexCount, 0, 0);
 }

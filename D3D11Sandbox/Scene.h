@@ -3,7 +3,7 @@
 #include "D3D11Sandbox.h"
 #include <DirectXMath.h>
 
-class BasicScene : public D3DWnd {
+class BasicScene : public IScene {
 
 	struct WordViewProjectionBuffer {
 		DirectX::XMFLOAT4X4 World;
@@ -41,8 +41,10 @@ class BasicScene : public D3DWnd {
 	UINT m_IndexCount;
 	float m_fCurrentAngle;
 
+	std::unique_ptr<ControlManager::ControlGroup>	m_pSideControls;
+	D3DWnd* m_pD3D;
 public:
-	BasicScene(HWND hWnd) : D3DWnd(hWnd), m_MeshResolution(1), m_IndexCount(0), m_fCurrentAngle(0.0f) {};
+	BasicScene(D3DWnd* pD3D) : m_pD3D(pD3D), m_MeshResolution(1), m_IndexCount(0), m_fCurrentAngle(0.0f) {};
 
 	void SetResolution(UINT resolution);
 	UINT GetResolution() const { return m_MeshResolution; }
@@ -51,6 +53,7 @@ public:
 
 	void CreateDeviceDependentResources() override;
 	void CreateWindowSizeDependentResources() override;
+	void CreateSideControls(ControlManager* pManager) override;
 	void ReleaseResources() override;
 
 	void Update() override;

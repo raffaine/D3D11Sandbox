@@ -24,14 +24,35 @@ inline void throw_if_fail(HRESULT hr)
 }
 
 class ControlManager {
+public:
+	class ControlGroup {
+		struct Ctrl {
+			UINT CtrlId;
+			HWND CtrlWnd;
+		};
+
+		friend class ControlManager;
+		ControlManager* _mgr;
+
+		RECT  _area;
+		std::vector<Ctrl> _ctrls;
+
+		ControlGroup(ControlManager* mgr, RECT area, HWND hwnd, UINT id) 
+			: _mgr(mgr), _area(area), _ctrls(std::vector<Ctrl> {Ctrl{ id, hwnd }}) {
+			_area.top += 10;
+		};
+	public:
+		~ControlGroup();
+
+		ControlGroup& AddIntegerControl(const WCHAR* szLabel, UINT range_min, UINT range_max, UINT initial, std::function<void(UINT)> fnCallback);
+		ControlGroup& AddButton(const WCHAR* szCaption, std::function<void()> fnAction);
+	};
+
+private:
+	friend class ControlGroup;
 	struct Range {
 		UINT low, high;
 		Range(UINT l, UINT h) : low (l), high(h) {}
-	};
-
-	struct Ctrl {
-		UINT CtrlId;
-		HWND CtrlWnd;
 	};
 
 	HWND  m_hwnd;
@@ -39,21 +60,34 @@ class ControlManager {
 	Range m_ctrlRange;
 
 	std::map<UINT, std::function<void(UINT, WPARAM, LPARAM)>> m_Callbacks;
-	std::vector<Ctrl> m_ctrls;
 
 public:
 	ControlManager(HWND hwnd, UINT startId, RECT rcArea);
 
 	BOOL MsgProc(UINT msg, WPARAM w, LPARAM l);
 
-	void AddIntegerControl(const WCHAR* szLabel, UINT x, UINT y, UINT range_min, UINT range_max, UINT initial, std::function<void(UINT)> fnCallback);
-	void AddButton(const WCHAR* szCaption, UINT x, UINT y, std::function<void()> fnAction);
+	ControlGroup* CreateGroup(const WCHAR* szLabel);
 
 	static std::wstring GetFilePathFromUser(HWND hWnd);
 };
 
+class D3DWnd;
+
+class IScene {
+public:
+	// Functions used by Derived classes
+	virtual void CreateDeviceDependentResources() = 0;
+	virtual void CreateWindowSizeDependentResources() = 0;
+	virtual void CreateSideControls(ControlManager*) = 0;
+	virtual void ReleaseResources() = 0;
+
+	// Main Functions
+	virtual void Update() = 0;
+	virtual void Render() = 0;
+};
+
 class D3DWnd {
-protected:
+public:
 	UINT m_width, m_height;
 	Microsoft::WRL::ComPtr<ID3D11Device1>			m_device;
 	Microsoft::WRL::ComPtr<ID3D11DeviceContext>		m_context;
@@ -68,7 +102,12 @@ protected:
 	// Helper Functions
 	bool ReadBytes(const char* cso_file, BYTE** content, size_t& content_size);
 
+	// Render Helpers
+	void ClearAndSetTargets(const float clr[4], float depth=1.0f, UINT8 stencil=0);
+
 private:
+	std::unique_ptr<IScene> m_pScene;
+
 	void InitializeD3D();
 	void ReleaseD3DResources();
 
@@ -76,18 +115,22 @@ public:
 	HWND WndHandle;
 
 	D3DWnd(HWND handle) : WndHandle(handle), m_width(100), m_height(100), m_viewport() {};
-	~D3DWnd() { ReleaseD3DResources(); }
+	~D3DWnd() {
+		ReleaseD3DResources(); 
+	}
 
 	void WindowResizeEvent(UINT width, UINT height);
 
-	// Functions used by Derived classes
-	virtual void CreateDeviceDependentResources() {};
-	virtual void CreateWindowSizeDependentResources() {};
-	virtual void ReleaseResources() {};
-
 	// Main Functions
-	virtual void Update() {};
-	virtual void Render() {};
+	void LoadScene(IScene* pScene, ControlManager* mgr);
+	void Update() {
+		if (m_pScene)
+			m_pScene->Update();
+	};
+	void Render() {
+		if (m_pScene)
+			m_pScene->Render();
+	};
 	void Present();
 
 	static const WCHAR* szWndClass;
